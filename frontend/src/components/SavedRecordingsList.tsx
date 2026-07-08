@@ -1,6 +1,7 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { RecordingItem } from '../types';
+import { AudioVisualizer } from './AudioVisualizer';
 
 interface SavedRecordingsListProps {
   recordings: RecordingItem[];
@@ -12,6 +13,9 @@ interface SavedRecordingsListProps {
   playingItemId: string | null;
   isPlaying: boolean;
   isDark?: boolean;
+  playbackPositionMs: number;
+  playbackDurationMs: number;
+  volume: number;
 }
 
 export const SavedRecordingsList = ({
@@ -24,6 +28,9 @@ export const SavedRecordingsList = ({
   playingItemId,
   isPlaying,
   isDark,
+  playbackPositionMs,
+  playbackDurationMs,
+  volume,
 }: SavedRecordingsListProps): React.JSX.Element => {
   return (
     <View style={[styles.listCard, isDark && styles.listCardDark]}>
@@ -39,9 +46,24 @@ export const SavedRecordingsList = ({
             <View key={item.id} style={[styles.listItem, isDark && styles.listItemDark]}>
               <View style={styles.listItemLeft}>
                 <Text style={[styles.listTitle, isDark && styles.listTitleDark]}>{item.name}</Text>
-                <Text style={[styles.metaText, isDark && styles.metaTextDark]}>
-                  {new Date(item.createdAt).toLocaleString()} - {formatDuration(item.durationMs)}
-                </Text>
+                {isCurrentItemPlaying ? (
+                  <View style={styles.playbackContainer}>
+                    <Text style={[styles.runningTime, isDark && styles.runningTimeDark]}>
+                      {formatDuration(playbackPositionMs)} / {formatDuration(playbackDurationMs)}
+                    </Text>
+                    <AudioVisualizer
+                      isRecording={isPlaying}
+                      isPaused={false}
+                      volume={volume}
+                      isDark={isDark}
+                      size="small"
+                    />
+                  </View>
+                ) : (
+                  <Text style={[styles.metaText, isDark && styles.metaTextDark]}>
+                    {new Date(item.createdAt).toLocaleString()} - {formatDuration(item.durationMs)}
+                  </Text>
+                )}
               </View>
               <View style={styles.listActions}>
                 {isCurrentItemPlaying ? (
@@ -95,6 +117,21 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 8,
     minHeight: 180,
+  },
+  playbackContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+    gap: 8,
+  },
+  runningTime: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#3b82f6',
+    fontVariant: ['tabular-nums'],
+  },
+  runningTimeDark: {
+    color: '#60a5fa',
   },
   listCardDark: {
     backgroundColor: '#1e293b',

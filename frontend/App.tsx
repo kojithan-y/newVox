@@ -55,6 +55,40 @@ const App = (): React.JSX.Element => {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [voiceType, setVoiceType] = useState<string>('multilingual');
 
+  // Playback states
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackDurationMs, setPlaybackDurationMs] = useState(0);
+  const [playbackPositionMs, setPlaybackPositionMs] = useState(0);
+
+  const handlePlaybackStatusUpdate = (status: any) => {
+    if (status.isLoaded) {
+      setIsPlaying(status.isPlaying);
+      setPlaybackPositionMs(status.positionMillis || 0);
+      setPlaybackDurationMs(status.durationMillis || 0);
+
+      if (status.didJustFinish) {
+        setIsPlaying(false);
+        setPlaybackPositionMs(0);
+        setVolume(0);
+        setStatusText('Idle');
+      }
+    }
+  };
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+    if (isPlaying && !isRecording) {
+      interval = setInterval(() => {
+        setVolume(20 + Math.random() * 80);
+      }, 120);
+    } else if (!isRecording) {
+      setVolume(0);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isPlaying, isRecording]);
+
   useEffect(() => {
     const loadVoiceTypeSetting = async () => {
       try {
@@ -366,20 +400,72 @@ const App = (): React.JSX.Element => {
     }
   };
 
+  const stopPlayback = async (): Promise<void> => {
+    try {
+      if (soundRef.current) {
+        await soundRef.current.stopAsync();
+        await soundRef.current.unloadAsync();
+        soundRef.current = null;
+      }
+      setIsPlaying(false);
+      setPlaybackPositionMs(0);
+      setVolume(0);
+      setStatusText('Idle');
+    } catch (error) {
+      setErrorMessage((error as Error).message || 'Failed to stop playback.');
+    }
+  };
+
   const playRecording = async (item: RecordingItem): Promise<void> => {
     try {
       setErrorMessage(null);
       if (soundRef.current) {
+        await soundRef.current.stopAsync();
         await soundRef.current.unloadAsync();
+        soundRef.current = null;
       }
 
-      const { sound } = await Audio.Sound.createAsync({ uri: item.uri });
+      setPlaybackPositionMs(0);
+      setPlaybackDurationMs(item.durationMs);
+
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: item.uri },
+        { shouldPlay: true, progressUpdateIntervalMillis: 100 },
+        handlePlaybackStatusUpdate
+      );
       soundRef.current = sound;
-      await sound.playAsync();
       setSelectedRecording(item);
       setStatusText(`Playing ${item.name}`);
     } catch (error) {
       setErrorMessage((error as Error).message || 'Failed to play recording.');
+    }
+  };
+
+  const deleteRecording = async (item: RecordingItem): Promise<void> => {
+    try {
+      if (soundRef.current && selectedRecording?.id === item.id) {
+        await stopPlayback();
+      }
+
+      if (Platform.OS !== 'web') {
+        const fileInfo = await FileSystem.getInfoAsync(item.uri);
+        if (fileInfo.exists) {
+          await FileSystem.deleteAsync(item.uri);
+        }
+      }
+
+      const updatedItems = recordings.filter((r) => r.id !== item.id);
+      await saveRecordingItems(updatedItems);
+      setRecordings(updatedItems);
+
+      if (selectedRecording?.id === item.id) {
+        setSelectedRecording(null);
+        setTranscript('');
+      }
+
+      setStatusText('Recording deleted');
+    } catch (error) {
+      setErrorMessage((error as Error).message || 'Failed to delete recording.');
     }
   };
 
@@ -411,12 +497,16 @@ const App = (): React.JSX.Element => {
           </View>
         </View>
 
-        {isRecording && (
+        {(isRecording || isPlaying) && (
           <View style={styles.liveDashboard}>
-            <Text style={[styles.timer, isDarkMode && styles.timerDark]}>{formattedTimer}</Text>
+            <Text style={[styles.timer, isDarkMode && styles.timerDark]}>
+              {isRecording
+                ? formattedTimer
+                : `${formatDuration(playbackPositionMs)} / ${formatDuration(playbackDurationMs)}`}
+            </Text>
             <AudioVisualizer
-              isRecording={isRecording}
-              isPaused={isPaused}
+              isRecording={isRecording || isPlaying}
+              isPaused={isRecording ? isPaused : !isPlaying}
               volume={volume}
               isDark={isDarkMode}
             />
@@ -513,8 +603,15 @@ const App = (): React.JSX.Element => {
           recordings={recordings}
           formatDuration={formatDuration}
           onPlay={playRecording}
+          onStop={stopPlayback}
+          onDelete={deleteRecording}
           onTranscribe={transcribeSavedRecording}
+          playingItemId={selectedRecording?.id || null}
+          isPlaying={isPlaying}
           isDark={isDarkMode}
+          playbackPositionMs={playbackPositionMs}
+          playbackDurationMs={playbackDurationMs}
+          volume={volume}
         />
 
         {errorMessage ? (

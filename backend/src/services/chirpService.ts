@@ -60,8 +60,8 @@ export const transcribeWithChirp = async (
 ): Promise<string> => {
   const wavBuffer = await toLinear16Wav16kMono(audioBuffer, mimeType);
 
-  let primaryLanguage = 'ta-LK';
-  let alternatives: string[] = ['en-US', 'si-LK', 'ta-IN'];
+  let primaryLanguage = 'si-LK';
+  let alternatives: string[] = ['en-US', 'ta-LK', 'ta-IN'];
 
   if (voiceType === 'si-LK') {
     primaryLanguage = 'si-LK';
