@@ -1,0 +1,27 @@
+# Dependency directories
+node_modules/
+
+# Local environmental config files (contains keys)
+.env
+.env.local
+
+# Expo directories
+.expo/
+web-build/
+
+# IDE files
+.vscode/
+.idea/
+
+# OS/System files
+.DS_Store
+Thumbs.db
+*.log
+
+# Temporary and build artifacts
+tmp/
+dist/
+build/
+*.wav
+*.mp3
+*.m4a
