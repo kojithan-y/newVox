@@ -6,7 +6,11 @@ interface SavedRecordingsListProps {
   recordings: RecordingItem[];
   formatDuration: (durationMs: number) => string;
   onPlay: (item: RecordingItem) => void;
+  onStop: () => void;
+  onDelete: (item: RecordingItem) => void;
   onTranscribe: (item: RecordingItem) => void;
+  playingItemId: string | null;
+  isPlaying: boolean;
   isDark?: boolean;
 }
 
@@ -14,7 +18,11 @@ export const SavedRecordingsList = ({
   recordings,
   formatDuration,
   onPlay,
+  onStop,
+  onDelete,
   onTranscribe,
+  playingItemId,
+  isPlaying,
   isDark,
 }: SavedRecordingsListProps): React.JSX.Element => {
   return (
@@ -25,34 +33,56 @@ export const SavedRecordingsList = ({
           No local recordings yet.
         </Text>
       ) : (
-        recordings.map((item) => (
-          <View key={item.id} style={[styles.listItem, isDark && styles.listItemDark]}>
-            <View style={styles.listItemLeft}>
-              <Text style={[styles.listTitle, isDark && styles.listTitleDark]}>{item.name}</Text>
-              <Text style={[styles.metaText, isDark && styles.metaTextDark]}>
-                {new Date(item.createdAt).toLocaleString()} - {formatDuration(item.durationMs)}
-              </Text>
-            </View>
-            <View style={styles.listActions}>
-              <Pressable
-                style={[styles.inlineButton, isDark && styles.inlineButtonDark]}
-                onPress={() => onPlay(item)}
-              >
-                <Text style={[styles.inlineButtonText, isDark && styles.inlineButtonTextDark]}>
-                  Play
+        recordings.map((item) => {
+          const isCurrentItemPlaying = playingItemId === item.id && isPlaying;
+          return (
+            <View key={item.id} style={[styles.listItem, isDark && styles.listItemDark]}>
+              <View style={styles.listItemLeft}>
+                <Text style={[styles.listTitle, isDark && styles.listTitleDark]}>{item.name}</Text>
+                <Text style={[styles.metaText, isDark && styles.metaTextDark]}>
+                  {new Date(item.createdAt).toLocaleString()} - {formatDuration(item.durationMs)}
                 </Text>
-              </Pressable>
-              <Pressable
-                style={[styles.inlineButton, isDark && styles.inlineButtonDark]}
-                onPress={() => onTranscribe(item)}
-              >
-                <Text style={[styles.inlineButtonText, isDark && styles.inlineButtonTextDark]}>
-                  Transcribe
-                </Text>
-              </Pressable>
+              </View>
+              <View style={styles.listActions}>
+                {isCurrentItemPlaying ? (
+                  <Pressable
+                    style={[styles.inlineButton, styles.stopButton]}
+                    onPress={onStop}
+                  >
+                    <Text style={styles.stopButtonText}>
+                      Stop
+                    </Text>
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    style={[styles.inlineButton, isDark && styles.inlineButtonDark]}
+                    onPress={() => onPlay(item)}
+                  >
+                    <Text style={[styles.inlineButtonText, isDark && styles.inlineButtonTextDark]}>
+                      Play
+                    </Text>
+                  </Pressable>
+                )}
+                <Pressable
+                  style={[styles.inlineButton, isDark && styles.inlineButtonDark]}
+                  onPress={() => onTranscribe(item)}
+                >
+                  <Text style={[styles.inlineButtonText, isDark && styles.inlineButtonTextDark]}>
+                    Transcribe
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.inlineButton, isDark ? styles.deleteButtonDark : styles.deleteButtonLight]}
+                  onPress={() => onDelete(item)}
+                >
+                  <Text style={isDark ? styles.deleteButtonTextDark : styles.deleteButtonTextLight}>
+                    Delete
+                  </Text>
+                </Pressable>
+              </View>
             </View>
-          </View>
-        ))
+          );
+        })
       )}
     </View>
   );
@@ -129,5 +159,29 @@ const styles = StyleSheet.create({
   },
   inlineButtonTextDark: {
     color: '#cbd5e1',
+  },
+  stopButton: {
+    backgroundColor: '#f59e0b',
+  },
+  stopButtonText: {
+    color: '#ffffff',
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  deleteButtonLight: {
+    backgroundColor: '#fee2e2',
+  },
+  deleteButtonDark: {
+    backgroundColor: '#7f1d1d',
+  },
+  deleteButtonTextLight: {
+    color: '#ef4444',
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  deleteButtonTextDark: {
+    color: '#fca5a5',
+    fontWeight: '600',
+    fontSize: 12,
   },
 });

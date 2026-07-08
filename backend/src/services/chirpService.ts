@@ -11,7 +11,7 @@ type GoogleAlternative = { transcript?: string };
 type GoogleResult = { alternatives?: GoogleAlternative[] };
 type GoogleRecognitionResponse = { results?: GoogleResult[] };
 
-const LANGUAGE_CODES = ['en-US', 'si-LK', 'ta-IN'];
+const LANGUAGE_CODES = ['ta-LK', 'en-US', 'si-LK', 'ta-IN'];
 const execFileAsync = promisify(execFile);
 
 const toLinear16Wav16kMono = async (input: Buffer, mimeType: string): Promise<Buffer> => {
@@ -53,17 +53,40 @@ const toLinear16Wav16kMono = async (input: Buffer, mimeType: string): Promise<Bu
  * Sends uploaded audio to Google Chirp Speech-to-Text.
  * Primary language is English with automatic alternatives for Sinhala and Tamil.
  */
-export const transcribeWithChirp = async (audioBuffer: Buffer, mimeType: string): Promise<string> => {
+export const transcribeWithChirp = async (
+  audioBuffer: Buffer,
+  mimeType: string,
+  voiceType: string = 'multilingual',
+): Promise<string> => {
   const wavBuffer = await toLinear16Wav16kMono(audioBuffer, mimeType);
+
+  let primaryLanguage = 'ta-LK';
+  let alternatives: string[] = ['en-US', 'si-LK', 'ta-IN'];
+
+  if (voiceType === 'si-LK') {
+    primaryLanguage = 'si-LK';
+    alternatives = [];
+  } else if (voiceType === 'ta-LK') {
+    primaryLanguage = 'ta-LK';
+    alternatives = [];
+  } else if (voiceType === 'en-US') {
+    primaryLanguage = 'en-US';
+    alternatives = [];
+  }
 
   const requestBody = {
     config: {
       encoding: 'LINEAR16',
       sampleRateHertz: 16000,
-      languageCode: LANGUAGE_CODES[0],
-      alternativeLanguageCodes: LANGUAGE_CODES.slice(1),
+      languageCode: primaryLanguage,
+      alternativeLanguageCodes: alternatives.length > 0 ? alternatives : undefined,
       model: env.chirpModel,
       enableAutomaticPunctuation: true,
+      metadata: {
+        interactionType: 'DICTATION',
+        microphoneDistance: 'NEARFIELD',
+        recordingDeviceType: 'SMARTPHONE',
+      },
     },
     audio: {
       content: wavBuffer.toString('base64'),

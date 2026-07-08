@@ -26,7 +26,8 @@ transcribeRouter.post('/', upload.single('audio'), async (req, res, next) => {
       return;
     }
 
-    const transcript = await transcribeWithChirp(file.buffer, file.mimetype || '');
+    const voiceType = (req.body.voiceType as string) || 'multilingual';
+    const transcript = await transcribeWithChirp(file.buffer, file.mimetype || '', voiceType);
     res.json({ transcript });
   } catch (error) {
     next(error);

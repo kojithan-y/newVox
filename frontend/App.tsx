@@ -18,6 +18,7 @@ import { RecordingControls } from './src/components/RecordingControls';
 import { SavedRecordingsList } from './src/components/SavedRecordingsList';
 import { TranscriptPanel } from './src/components/TranscriptPanel';
 import { transcribeAudio } from './src/services/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RecordingItem } from './src/types';
 import {
   createSafeFileName,
@@ -52,6 +53,30 @@ const App = (): React.JSX.Element => {
   const [recordingDurationMs, setRecordingDurationMs] = useState(0);
   const [volume, setVolume] = useState(0);
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [voiceType, setVoiceType] = useState<string>('multilingual');
+
+  useEffect(() => {
+    const loadVoiceTypeSetting = async () => {
+      try {
+        const val = await AsyncStorage.getItem('@voice_type');
+        if (val) {
+          setVoiceType(val);
+        }
+      } catch (e) {
+        // silent fail
+      }
+    };
+    loadVoiceTypeSetting();
+  }, []);
+
+  const handleVoiceTypeChange = async (type: string) => {
+    setVoiceType(type);
+    try {
+      await AsyncStorage.setItem('@voice_type', type);
+    } catch (e) {
+      // silent fail
+    }
+  };
 
   // Web Audio Context refs for real-time visualizer mapping
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -287,7 +312,7 @@ const App = (): React.JSX.Element => {
     try {
       setIsUploading(true);
       setStatusText('Transcribing');
-      const response = await transcribeAudio(audioUri);
+      const response = await transcribeAudio(audioUri, voiceType);
       setTranscript(response.transcript || '');
       setStatusText('Transcription complete');
     } catch (error) {
@@ -397,6 +422,43 @@ const App = (): React.JSX.Element => {
             />
           </View>
         )}
+
+        <View style={[styles.langCard, isDarkMode && styles.langCardDark]}>
+          <Text style={[styles.langLabel, isDarkMode && styles.langLabelDark]}>
+            Voice Recording Type
+          </Text>
+          <View style={styles.langSelectorRow}>
+            {[
+              { id: 'si-LK', label: 'Sinhala LK' },
+              { id: 'ta-LK', label: 'Tamil LK' },
+              { id: 'en-US', label: 'English' },
+              { id: 'multilingual', label: 'Combination' },
+            ].map((option) => {
+              const isSelected = voiceType === option.id;
+              return (
+                <Pressable
+                  key={option.id}
+                  style={[
+                    styles.langPill,
+                    isDarkMode ? styles.langPillDark : styles.langPillLight,
+                    isSelected && (isDarkMode ? styles.langPillSelectedDark : styles.langPillSelectedLight),
+                  ]}
+                  onPress={() => handleVoiceTypeChange(option.id)}
+                >
+                  <Text
+                    style={[
+                      styles.langPillText,
+                      isDarkMode ? styles.langPillTextDark : styles.langPillTextLight,
+                      isSelected && styles.langPillTextSelected,
+                    ]}
+                  >
+                    {option.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
 
         <View style={[styles.controlCard, isDarkMode && styles.controlCardDark]}>
           <RecordingControls
@@ -677,6 +739,71 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
     lineHeight: 18,
+  },
+  langCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    gap: 8,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+  },
+  langCardDark: {
+    backgroundColor: '#1e293b',
+    borderColor: '#334155',
+  },
+  langLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#475569',
+    marginBottom: 4,
+  },
+  langLabelDark: {
+    color: '#94a3b8',
+  },
+  langSelectorRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  langPill: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  langPillLight: {
+    backgroundColor: '#f8fafc',
+    borderColor: '#cbd5e1',
+  },
+  langPillDark: {
+    backgroundColor: '#0f172a',
+    borderColor: '#475569',
+  },
+  langPillSelectedLight: {
+    backgroundColor: '#2563eb',
+    borderColor: '#2563eb',
+  },
+  langPillSelectedDark: {
+    backgroundColor: '#3b82f6',
+    borderColor: '#3b82f6',
+  },
+  langPillText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  langPillTextLight: {
+    color: '#475569',
+  },
+  langPillTextDark: {
+    color: '#cbd5e1',
+  },
+  langPillTextSelected: {
+    color: '#ffffff',
   },
 });
 

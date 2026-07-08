@@ -21,8 +21,9 @@ const client = axios.create({
   timeout: 45000,
 });
 
-export const transcribeAudio = async (audioUri: string): Promise<TranscriptionResponse> => {
+export const transcribeAudio = async (audioUri: string, voiceType: string): Promise<TranscriptionResponse> => {
   const formData = new FormData();
+  formData.append('voiceType', voiceType);
 
   if (Platform.OS === 'web') {
     try {
