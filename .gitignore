@@ -25,3 +25,4 @@ build/
 *.wav
 *.mp3
 *.m4a
+gcloud-key.json

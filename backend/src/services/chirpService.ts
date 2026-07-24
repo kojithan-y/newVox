@@ -1,4 +1,4 @@
-import axios from 'axios';
+import speech from '@google-cloud/speech';
 import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
@@ -7,12 +7,18 @@ import { promisify } from 'node:util';
 import ffmpegPath from 'ffmpeg-static';
 import { env } from '../config/env';
 
-type GoogleAlternative = { transcript?: string };
-type GoogleResult = { alternatives?: GoogleAlternative[] };
-type GoogleRecognitionResponse = { results?: GoogleResult[] };
-
 const LANGUAGE_CODES = ['ta-LK', 'en-US', 'si-LK', 'ta-IN'];
 const execFileAsync = promisify(execFile);
+
+// Configure the Google Speech client options
+const clientOptions: any = {};
+if (env.googleCredentialsPath) {
+  clientOptions.keyFilename = env.googleCredentialsPath;
+} else if (env.chirpApiKey) {
+  clientOptions.apiKey = env.chirpApiKey;
+}
+
+const speechClient = new speech.v1p1beta1.SpeechClient(clientOptions);
 
 const toLinear16Wav16kMono = async (input: Buffer, mimeType: string): Promise<Buffer> => {
   if (!ffmpegPath) {
@@ -74,52 +80,84 @@ export const transcribeWithChirp = async (
     alternatives = [];
   }
 
-  const requestBody = {
-    config: {
-      encoding: 'LINEAR16',
-      sampleRateHertz: 16000,
-      languageCode: primaryLanguage,
-      alternativeLanguageCodes: alternatives.length > 0 ? alternatives : undefined,
-      model: env.chirpModel,
-      enableAutomaticPunctuation: true,
-      metadata: {
-        interactionType: 'DICTATION',
-        microphoneDistance: 'NEARFIELD',
-        recordingDeviceType: 'SMARTPHONE',
-      },
-    },
-    audio: {
-      content: wavBuffer.toString('base64'),
-    },
-  };
-
   try {
-    const response = await axios.post<GoogleRecognitionResponse>(env.chirpApiUrl, requestBody, {
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': env.chirpApiKey,
+    const [operation] = await speechClient.longRunningRecognize({
+      config: {
+        encoding: 'LINEAR16',
+        sampleRateHertz: 16000,
+        languageCode: primaryLanguage,
+        alternativeLanguageCodes: alternatives.length > 0 ? alternatives : undefined,
+        model: env.chirpModel,
+        enableAutomaticPunctuation: true,
+        metadata: {
+          interactionType: 'DICTATION',
+          microphoneDistance: 'NEARFIELD',
+          recordingDeviceType: 'SMARTPHONE',
+        },
       },
-      params: {
-        // Many Google APIs accept API keys via query param; keep header too as a fallback.
-        key: env.chirpApiKey,
+      audio: {
+        content: wavBuffer.toString('base64'),
       },
-      timeout: 60000,
     });
 
-    const transcript = (response.data.results || [])
+    // Wait for the long-running operation to complete.
+    const [response] = await operation.promise();
+
+    const transcript = (response.results || [])
       .map((result) => result.alternatives?.[0]?.transcript || '')
       .join(' ')
       .trim();
 
     return transcript;
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      const apiMessage =
-        (error.response?.data as { error?: { message?: string } } | undefined)?.error?.message ||
-        error.message;
-      throw new Error(`Chirp transcription failed: ${apiMessage}`);
-    }
-
-    throw error;
+  } catch (error: any) {
+    throw new Error(`Chirp transcription failed: ${error.message}`);
   }
 };
+
+/**
+ * Creates a real-time speech-to-text stream using Google Cloud Speech streamingRecognize.
+ */
+export const createSpeechStream = (
+  voiceType: string,
+  onData: (data: { transcript: string; isFinal: boolean }) => void,
+  onError: (err: any) => void,
+) => {
+  let primaryLanguage = 'si-LK';
+  let alternatives: string[] = ['en-US', 'ta-LK', 'ta-IN'];
+
+  if (voiceType === 'si-LK') {
+    primaryLanguage = 'si-LK';
+    alternatives = [];
+  } else if (voiceType === 'ta-LK') {
+    primaryLanguage = 'ta-LK';
+    alternatives = [];
+  } else if (voiceType === 'en-US') {
+    primaryLanguage = 'en-US';
+    alternatives = [];
+  }
+
+  const recognizeStream = speechClient
+    .streamingRecognize({
+      config: {
+        encoding: 'LINEAR16',
+        sampleRateHertz: 16000,
+        languageCode: primaryLanguage,
+        alternativeLanguageCodes: alternatives.length > 0 ? alternatives : undefined,
+        model: env.chirpModel,
+        enableAutomaticPunctuation: true,
+      },
+      interimResults: true,
+    })
+    .on('error', onError)
+    .on('data', (data: any) => {
+      const result = data.results[0];
+      if (result && result.alternatives?.[0]) {
+        const transcript = result.alternatives[0].transcript;
+        const isFinal = result.isFinal === true;
+        onData({ transcript, isFinal });
+      }
+    });
+
+  return recognizeStream;
+};
+

@@ -17,7 +17,7 @@ import { AudioVisualizer } from './src/components/AudioVisualizer';
 import { RecordingControls } from './src/components/RecordingControls';
 import { SavedRecordingsList } from './src/components/SavedRecordingsList';
 import { TranscriptPanel } from './src/components/TranscriptPanel';
-import { transcribeAudio } from './src/services/api';
+import { getApiUrl, transcribeAudio } from './src/services/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RecordingItem } from './src/types';
 import {
@@ -27,6 +27,41 @@ import {
   loadRecordingItems,
   saveRecordingItems,
 } from './src/utils/recordingStorage';
+const downsampleAndConvertTo16BitPCM = (
+  buffer: Float32Array,
+  inputSampleRate: number,
+  outputSampleRate: number = 16000,
+): Int16Array => {
+  if (outputSampleRate === inputSampleRate) {
+    const result = new Int16Array(buffer.length);
+    for (let i = 0; i < buffer.length; i++) {
+      result[i] = Math.min(1, Math.max(-1, buffer[i])) * 0x7fff;
+    }
+    return result;
+  }
+
+  const sampleRateRatio = inputSampleRate / outputSampleRate;
+  const resultLength = Math.round(buffer.length / sampleRateRatio);
+  const result = new Int16Array(resultLength);
+
+  let offsetResult = 0;
+  let offsetBuffer = 0;
+
+  while (offsetResult < result.length) {
+    const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+    let accum = 0;
+    let count = 0;
+    for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+      accum += buffer[i];
+      count++;
+    }
+    const val = count > 0 ? accum / count : 0;
+    result[offsetResult] = Math.min(1, Math.max(-1, val)) * 0x7fff;
+    offsetResult++;
+    offsetBuffer = nextOffsetBuffer;
+  }
+  return result;
+};
 
 const formatDuration = (durationMs: number): string => {
   const totalSeconds = Math.floor(durationMs / 1000);
@@ -48,6 +83,14 @@ const App = (): React.JSX.Element => {
   const [transcript, setTranscript] = useState('');
   const [statusText, setStatusText] = useState('Idle');
   const soundRef = useRef<Audio.Sound | null>(null);
+
+  // Live streaming states
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamTranscript, setStreamTranscript] = useState('');
+  const wsRef = useRef<WebSocket | null>(null);
+  const audioContextRefLive = useRef<AudioContext | null>(null);
+  const processorNodeRefLive = useRef<ScriptProcessorNode | null>(null);
+  const liveMediaStreamRef = useRef<MediaStream | null>(null);
 
   // Live visualizer, timer, and theme states
   const [recordingDurationMs, setRecordingDurationMs] = useState(0);
@@ -200,6 +243,13 @@ const App = (): React.JSX.Element => {
     })();
   }, []);
 
+  // 3-Minute duration cap for audio recordings
+  useEffect(() => {
+    if (isRecording && recordingDurationMs >= 180000) {
+      void stopRecording();
+    }
+  }, [recordingDurationMs, isRecording]);
+
   useEffect(() => {
     return () => {
       if (soundRef.current) {
@@ -207,9 +257,121 @@ const App = (): React.JSX.Element => {
       }
       if (Platform.OS === 'web') {
         stopWebAudioMeter();
+        stopLiveStreaming();
       }
     };
   }, []);
+
+  const stopLiveStreaming = () => {
+    setIsStreaming(false);
+    setStatusText('Idle');
+
+    if (processorNodeRefLive.current) {
+      processorNodeRefLive.current.disconnect();
+      processorNodeRefLive.current = null;
+    }
+
+    if (audioContextRefLive.current) {
+      if (audioContextRefLive.current.state !== 'closed') {
+        void audioContextRefLive.current.close();
+      }
+      audioContextRefLive.current = null;
+    }
+
+    if (liveMediaStreamRef.current) {
+      liveMediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      liveMediaStreamRef.current = null;
+    }
+
+    if (wsRef.current) {
+      if (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING) {
+        wsRef.current.close();
+      }
+      wsRef.current = null;
+    }
+  };
+
+  const startLiveStreaming = async () => {
+    if (Platform.OS !== 'web') {
+      Alert.alert(
+        'Supported on Web Only',
+        'Live streaming transcription is supported on Web/Browser platform in this version. For mobile apps, it requires custom native build configurations.'
+      );
+      return;
+    }
+
+    try {
+      setErrorMessage(null);
+      setStreamTranscript('');
+      setIsStreaming(true);
+      setStatusText('Connecting Stream');
+
+      const rawApiUrl = getApiUrl();
+      const wsUrl = rawApiUrl.replace(/^http/, 'ws') + '/api/stream';
+
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = async () => {
+        setStatusText('Stream Live');
+        ws.send(JSON.stringify({ voiceType }));
+
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          liveMediaStreamRef.current = stream;
+
+          const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+          const audioContext = new AudioCtx({ sampleRate: 16000 });
+          audioContextRefLive.current = audioContext;
+
+          const source = audioContext.createMediaStreamSource(stream);
+          const processor = audioContext.createScriptProcessor(4096, 1, 1);
+          processorNodeRefLive.current = processor;
+
+          source.connect(processor);
+          processor.connect(audioContext.destination);
+
+          const actualSampleRate = audioContext.sampleRate;
+
+          processor.onaudioprocess = (e) => {
+            if (ws.readyState !== WebSocket.OPEN) return;
+            const inputData = e.inputBuffer.getChannelData(0);
+            const pcm16 = downsampleAndConvertTo16BitPCM(inputData, actualSampleRate, 16000);
+            ws.send(pcm16.buffer);
+          };
+        } catch (err: any) {
+          stopLiveStreaming();
+          setErrorMessage('Failed to access microphone for streaming: ' + err.message);
+        }
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'transcript') {
+            setStreamTranscript(data.transcript);
+          } else if (data.type === 'error') {
+            setErrorMessage('Google Speech Stream error: ' + data.message);
+          }
+        } catch (e) {
+          // parse error
+        }
+      };
+
+      ws.onerror = (err) => {
+        setErrorMessage('Stream connection error');
+      };
+
+      ws.onclose = () => {
+        setIsStreaming(false);
+        setStatusText('Stream Closed');
+      };
+
+    } catch (e: any) {
+      setIsStreaming(false);
+      setErrorMessage('Failed to initiate live streaming: ' + e.message);
+    }
+  };
 
   const startRecording = async (): Promise<void> => {
     try {
@@ -554,7 +716,7 @@ const App = (): React.JSX.Element => {
           <RecordingControls
             isRecording={isRecording}
             isPaused={isPaused}
-            isUploading={isUploading}
+            isUploading={isUploading || isStreaming}
             onStart={startRecording}
             onPause={pauseRecording}
             onResume={resumeRecording}
@@ -562,6 +724,32 @@ const App = (): React.JSX.Element => {
             isDark={isDarkMode}
           />
         </View>
+
+        {Platform.OS === 'web' && (
+          <View style={[styles.controlCard, isDarkMode && styles.controlCardDark, { marginTop: 4, gap: 12 }]}>
+            <Text style={[styles.langLabel, isDarkMode && styles.langLabelDark, { textAlign: 'center', marginBottom: 2 }]}>
+              Live Streaming Transcription (Web Only)
+            </Text>
+            <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+              {!isStreaming ? (
+                <Pressable
+                  style={[styles.button, { backgroundColor: '#10b981', paddingVertical: 10, paddingHorizontal: 24, borderRadius: 20 }]}
+                  onPress={startLiveStreaming}
+                  disabled={isRecording}
+                >
+                  <Text style={[styles.buttonText, { fontSize: 13, fontWeight: '700' }]}>🎙️ Start Live Stream</Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  style={[styles.button, { backgroundColor: '#ef4444', paddingVertical: 10, paddingHorizontal: 24, borderRadius: 20 }]}
+                  onPress={stopLiveStreaming}
+                >
+                  <Text style={[styles.buttonText, { fontSize: 13, fontWeight: '700' }]}>🛑 Stop Live Stream</Text>
+                </Pressable>
+              )}
+            </View>
+          </View>
+        )}
 
         {selectedRecording && (
           <View style={[styles.playerCard, isDarkMode && styles.playerCardDark]}>
@@ -591,9 +779,9 @@ const App = (): React.JSX.Element => {
         )}
 
         <TranscriptPanel
-          transcript={transcript}
-          isUploading={isUploading}
-          onChangeTranscript={setTranscript}
+          transcript={isStreaming ? streamTranscript : transcript}
+          isUploading={isUploading || isStreaming}
+          onChangeTranscript={isStreaming ? setStreamTranscript : setTranscript}
           onCopy={copyTranscript}
           onExport={exportTranscript}
           isDark={isDarkMode}

@@ -2,7 +2,7 @@ import axios from 'axios';
 import { Platform } from 'react-native';
 import { TranscriptionResponse } from '../types';
 
-const getApiUrl = () => {
+export const getApiUrl = () => {
   if (process.env.EXPO_PUBLIC_API_URL) {
     return process.env.EXPO_PUBLIC_API_URL;
   }
@@ -18,7 +18,7 @@ const apiUrl = getApiUrl();
 
 const client = axios.create({
   baseURL: apiUrl,
-  timeout: 45000,
+  timeout: 180000,
 });
 
 export const transcribeAudio = async (audioUri: string, voiceType: string): Promise<TranscriptionResponse> => {
