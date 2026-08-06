@@ -87,6 +87,7 @@ const App = (): React.JSX.Element => {
   // Live streaming states
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamTranscript, setStreamTranscript] = useState('');
+  const streamFinalTextRef = useRef(''); // accumulated final transcripts
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRefLive = useRef<AudioContext | null>(null);
   const processorNodeRefLive = useRef<ScriptProcessorNode | null>(null);
@@ -264,7 +265,9 @@ const App = (): React.JSX.Element => {
 
   const stopLiveStreaming = () => {
     setIsStreaming(false);
-    setStatusText('Idle');
+    setStatusText('Stream Ended');
+    // Preserve the stream transcript into the main transcript so it stays visible
+    setTranscript(streamFinalTextRef.current || streamTranscript);
 
     if (processorNodeRefLive.current) {
       processorNodeRefLive.current.disconnect();
@@ -303,6 +306,8 @@ const App = (): React.JSX.Element => {
     try {
       setErrorMessage(null);
       setStreamTranscript('');
+      streamFinalTextRef.current = '';
+      setTranscript('');
       setIsStreaming(true);
       setStatusText('Connecting Stream');
 
@@ -350,19 +355,20 @@ const App = (): React.JSX.Element => {
           const data = JSON.parse(event.data);
           if (data.type === 'transcript') {
             if (data.isFinal) {
-              // Append finalized transcript
-              setStreamTranscript((prev) => (prev ? prev + ' ' : '') + data.transcript);
+              // Append finalized text to our accumulated ref
+              const updated = streamFinalTextRef.current
+                ? streamFinalTextRef.current + ' ' + data.transcript
+                : data.transcript;
+              streamFinalTextRef.current = updated;
+              setStreamTranscript(updated);
             } else {
-              // Show interim result temporarily (will be replaced by final)
-              setStreamTranscript((prev) => {
-                // Remove any previous interim text (after last final)
-                const base = prev || '';
-                return base + ' [' + data.transcript + '...]';
-              });
+              // Show accumulated finals + current interim
+              const base = streamFinalTextRef.current;
+              setStreamTranscript(base ? base + ' ' + data.transcript : data.transcript);
             }
           } else if (data.type === 'error') {
             console.error('Stream error from server:', data.message);
-            setErrorMessage('Google Speech Stream error: ' + data.message);
+            setErrorMessage('Speech stream error: ' + data.message);
           }
         } catch (e) {
           // parse error
@@ -534,19 +540,21 @@ const App = (): React.JSX.Element => {
   };
 
   const copyTranscript = async (): Promise<void> => {
-    if (!transcript.trim()) return;
-    await Clipboard.setStringAsync(transcript);
+    const activeText = streamTranscript || transcript;
+    if (!activeText.trim()) return;
+    await Clipboard.setStringAsync(activeText);
     Alert.alert('Copied', 'Transcript copied to clipboard.');
   };
 
   const exportTranscript = async (): Promise<void> => {
     try {
-      if (!transcript.trim()) return;
+      const activeText = streamTranscript || transcript;
+      if (!activeText.trim()) return;
       const fileName = `transcript-${Date.now()}.txt`;
 
       if (Platform.OS === 'web') {
         const element = document.createElement('a');
-        const file = new Blob([transcript], { type: 'text/plain;charset=utf-8' });
+        const file = new Blob([activeText], { type: 'text/plain;charset=utf-8' });
         element.href = URL.createObjectURL(file);
         element.download = fileName;
         document.body.appendChild(element);
@@ -557,7 +565,7 @@ const App = (): React.JSX.Element => {
       }
 
       const fileUri = `${FileSystem.cacheDirectory ?? ''}${fileName}`;
-      await FileSystem.writeAsStringAsync(fileUri, transcript, {
+      await FileSystem.writeAsStringAsync(fileUri, activeText, {
         encoding: FileSystem.EncodingType.UTF8,
       });
 
@@ -790,9 +798,16 @@ const App = (): React.JSX.Element => {
         )}
 
         <TranscriptPanel
-          transcript={isStreaming ? streamTranscript : transcript}
+          transcript={streamTranscript || transcript}
           isUploading={isUploading || isStreaming}
-          onChangeTranscript={isStreaming ? setStreamTranscript : setTranscript}
+          onChangeTranscript={(text) => {
+            if (streamTranscript) {
+              setStreamTranscript(text);
+              streamFinalTextRef.current = text;
+            } else {
+              setTranscript(text);
+            }
+          }}
           onCopy={copyTranscript}
           onExport={exportTranscript}
           isDark={isDarkMode}

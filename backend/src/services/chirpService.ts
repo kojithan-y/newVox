@@ -7,7 +7,6 @@ import { promisify } from 'node:util';
 import ffmpegPath from 'ffmpeg-static';
 import { env } from '../config/env';
 
-const LANGUAGE_CODES = ['ta-IN', 'en-US', 'si-LK'];
 const execFileAsync = promisify(execFile);
 
 // Configure the Google Speech client options
@@ -56,45 +55,70 @@ const toLinear16Wav16kMono = async (input: Buffer, mimeType: string): Promise<Bu
 };
 
 /**
- * Sends uploaded audio to Google Chirp Speech-to-Text.
- * Primary language is English with automatic alternatives for Sinhala and Tamil.
+ * Resolves a language code for the given voiceType.
+ * Centralised so both batch and streaming stay consistent.
+ */
+const resolveLanguage = (voiceType: string): string => {
+  switch (voiceType) {
+    case 'si-LK':
+      return 'si-LK';
+    case 'ta-IN':
+      return 'ta-IN';
+    case 'en-US':
+      return 'en-US';
+    case 'multilingual':
+    default:
+      return 'en-US';
+  }
+};
+
+/**
+ * Sends uploaded audio to Google Cloud Speech-to-Text (batch / longRunningRecognize).
+ * Includes speaker diarization when enabled.
  */
 export const transcribeWithChirp = async (
   audioBuffer: Buffer,
   mimeType: string,
   voiceType: string = 'multilingual',
+  enableDiarization: boolean = true,
 ): Promise<string> => {
   const wavBuffer = await toLinear16Wav16kMono(audioBuffer, mimeType);
+  const languageCode = resolveLanguage(voiceType);
 
-  let primaryLanguage = 'si-LK';
-  let alternatives: string[] = ['en-US', 'ta-IN'];
-
-  if (voiceType === 'si-LK') {
-    primaryLanguage = 'si-LK';
-    alternatives = [];
-  } else if (voiceType === 'ta-IN') {
-    primaryLanguage = 'ta-IN';
-    alternatives = [];
-  } else if (voiceType === 'en-US') {
-    primaryLanguage = 'en-US';
-    alternatives = [];
+  // For multilingual batch requests, we can use alternativeLanguageCodes
+  const alternatives: string[] = [];
+  if (voiceType === 'multilingual') {
+    alternatives.push('si-LK', 'ta-IN');
   }
 
+  console.log(`[Batch] Transcribing with language=${languageCode}, model=${env.chirpModel}, diarization=${enableDiarization}`);
+
   try {
-    const [operation] = await speechClient.longRunningRecognize({
-      config: {
-        encoding: 'LINEAR16',
-        sampleRateHertz: 16000,
-        languageCode: primaryLanguage,
-        alternativeLanguageCodes: alternatives.length > 0 ? alternatives : undefined,
-        model: env.chirpModel,
-        enableAutomaticPunctuation: true,
-        metadata: {
-          interactionType: 'DICTATION',
-          microphoneDistance: 'NEARFIELD',
-          recordingDeviceType: 'SMARTPHONE',
-        },
+    const config: any = {
+      encoding: 'LINEAR16',
+      sampleRateHertz: 16000,
+      languageCode,
+      alternativeLanguageCodes: alternatives.length > 0 ? alternatives : undefined,
+      model: env.chirpModel,
+      enableAutomaticPunctuation: true,
+      metadata: {
+        interactionType: 'DICTATION',
+        microphoneDistance: 'NEARFIELD',
+        recordingDeviceType: 'SMARTPHONE',
       },
+    };
+
+    // Speaker diarization (batch mode supports this well)
+    if (enableDiarization) {
+      config.diarizationConfig = {
+        enableSpeakerDiarization: true,
+        minSpeakerCount: 1,
+        maxSpeakerCount: 6,
+      };
+    }
+
+    const [operation] = await speechClient.longRunningRecognize({
+      config,
       audio: {
         content: wavBuffer.toString('base64'),
       },
@@ -103,6 +127,38 @@ export const transcribeWithChirp = async (
     // Wait for the long-running operation to complete.
     const [response] = await operation.promise();
 
+    if (!response.results || response.results.length === 0) {
+      return '';
+    }
+
+    // When diarization is enabled, the last result contains the full diarized transcript
+    if (enableDiarization) {
+      const lastResult = response.results[response.results.length - 1];
+      const words = lastResult.alternatives?.[0]?.words || [];
+
+      if (words.length > 0) {
+        // Build transcript with speaker labels
+        let diarizedText = '';
+        let currentSpeaker = -1;
+
+        for (const wordInfo of words) {
+          const speaker = wordInfo.speakerTag || 0;
+          const word = wordInfo.word || '';
+
+          if (speaker !== currentSpeaker) {
+            if (diarizedText.length > 0) diarizedText += '\n';
+            diarizedText += `[Speaker ${speaker}]: ${word}`;
+            currentSpeaker = speaker;
+          } else {
+            diarizedText += ` ${word}`;
+          }
+        }
+
+        return diarizedText.trim();
+      }
+    }
+
+    // Fallback: plain transcript without diarization
     const transcript = (response.results || [])
       .map((result) => result.alternatives?.[0]?.transcript || '')
       .join(' ')
@@ -116,44 +172,33 @@ export const transcribeWithChirp = async (
 
 /**
  * Creates a real-time speech-to-text stream using Google Cloud Speech streamingRecognize.
+ * Note: alternativeLanguageCodes is NOT supported in streaming mode.
+ * Note: Diarization in streaming is limited — only en-US with phone_call/default model.
  */
 export const createSpeechStream = (
   voiceType: string,
   onData: (data: { transcript: string; isFinal: boolean }) => void,
   onError: (err: any) => void,
 ) => {
-  let primaryLanguage = 'en-US';
+  const languageCode = resolveLanguage(voiceType);
 
-  if (voiceType === 'si-LK') {
-    primaryLanguage = 'si-LK';
-  } else if (voiceType === 'ta-IN') {
-    primaryLanguage = 'ta-IN';
-  } else if (voiceType === 'en-US') {
-    primaryLanguage = 'en-US';
-  } else if (voiceType === 'multilingual') {
-    // For multilingual streaming, default to en-US as primary
-    // alternativeLanguageCodes is NOT reliably supported in streamingRecognize
-    primaryLanguage = 'en-US';
-  }
-
-  console.log(`[Stream] Starting speech stream with language: ${primaryLanguage}, model: ${env.chirpModel}`);
+  console.log(`[Stream] Starting speech stream with language=${languageCode}, model=${env.chirpModel}`);
 
   const recognizeStream = speechClient
     .streamingRecognize({
       config: {
         encoding: 'LINEAR16',
         sampleRateHertz: 16000,
-        languageCode: primaryLanguage,
-        // Note: alternativeLanguageCodes removed — not supported in streamingRecognize for most models
+        languageCode,
+        // alternativeLanguageCodes NOT supported in streaming
         model: env.chirpModel,
         enableAutomaticPunctuation: true,
       },
       interimResults: true,
     })
     .on('error', (err: any) => {
-      // Error code 11 = STREAM_DURATION_EXCEEDED (normal timeout, not a real error)
       if (err.code === 11) {
-        console.log('[Stream] Stream duration limit reached (normal). Client should reconnect.');
+        console.log('[Stream] Stream duration limit reached (~305s). Client should reconnect.');
       } else {
         console.error(`[Stream] Speech stream error (code ${err.code}):`, err.message);
       }
@@ -170,4 +215,3 @@ export const createSpeechStream = (
 
   return recognizeStream;
 };
-
