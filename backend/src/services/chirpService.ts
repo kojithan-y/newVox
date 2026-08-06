@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import ffmpegPath from 'ffmpeg-static';
 import { env } from '../config/env';
 
-const LANGUAGE_CODES = ['ta-LK', 'en-US', 'si-LK', 'ta-IN'];
+const LANGUAGE_CODES = ['ta-IN', 'en-US', 'si-LK'];
 const execFileAsync = promisify(execFile);
 
 // Configure the Google Speech client options
@@ -67,13 +67,13 @@ export const transcribeWithChirp = async (
   const wavBuffer = await toLinear16Wav16kMono(audioBuffer, mimeType);
 
   let primaryLanguage = 'si-LK';
-  let alternatives: string[] = ['en-US', 'ta-LK', 'ta-IN'];
+  let alternatives: string[] = ['en-US', 'ta-IN'];
 
   if (voiceType === 'si-LK') {
     primaryLanguage = 'si-LK';
     alternatives = [];
-  } else if (voiceType === 'ta-LK') {
-    primaryLanguage = 'ta-LK';
+  } else if (voiceType === 'ta-IN') {
+    primaryLanguage = 'ta-IN';
     alternatives = [];
   } else if (voiceType === 'en-US') {
     primaryLanguage = 'en-US';
@@ -122,19 +122,21 @@ export const createSpeechStream = (
   onData: (data: { transcript: string; isFinal: boolean }) => void,
   onError: (err: any) => void,
 ) => {
-  let primaryLanguage = 'si-LK';
-  let alternatives: string[] = ['en-US', 'ta-LK', 'ta-IN'];
+  let primaryLanguage = 'en-US';
 
   if (voiceType === 'si-LK') {
     primaryLanguage = 'si-LK';
-    alternatives = [];
-  } else if (voiceType === 'ta-LK') {
-    primaryLanguage = 'ta-LK';
-    alternatives = [];
+  } else if (voiceType === 'ta-IN') {
+    primaryLanguage = 'ta-IN';
   } else if (voiceType === 'en-US') {
     primaryLanguage = 'en-US';
-    alternatives = [];
+  } else if (voiceType === 'multilingual') {
+    // For multilingual streaming, default to en-US as primary
+    // alternativeLanguageCodes is NOT reliably supported in streamingRecognize
+    primaryLanguage = 'en-US';
   }
+
+  console.log(`[Stream] Starting speech stream with language: ${primaryLanguage}, model: ${env.chirpModel}`);
 
   const recognizeStream = speechClient
     .streamingRecognize({
@@ -142,15 +144,23 @@ export const createSpeechStream = (
         encoding: 'LINEAR16',
         sampleRateHertz: 16000,
         languageCode: primaryLanguage,
-        alternativeLanguageCodes: alternatives.length > 0 ? alternatives : undefined,
+        // Note: alternativeLanguageCodes removed — not supported in streamingRecognize for most models
         model: env.chirpModel,
         enableAutomaticPunctuation: true,
       },
       interimResults: true,
     })
-    .on('error', onError)
+    .on('error', (err: any) => {
+      // Error code 11 = STREAM_DURATION_EXCEEDED (normal timeout, not a real error)
+      if (err.code === 11) {
+        console.log('[Stream] Stream duration limit reached (normal). Client should reconnect.');
+      } else {
+        console.error(`[Stream] Speech stream error (code ${err.code}):`, err.message);
+      }
+      onError(err);
+    })
     .on('data', (data: any) => {
-      const result = data.results[0];
+      const result = data.results?.[0];
       if (result && result.alternatives?.[0]) {
         const transcript = result.alternatives[0].transcript;
         const isFinal = result.isFinal === true;

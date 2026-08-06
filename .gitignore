@@ -26,3 +26,5 @@ build/
 *.mp3
 *.m4a
 gcloud-key.json
+service-account.json
+*.json.key

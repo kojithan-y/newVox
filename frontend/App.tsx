@@ -349,8 +349,19 @@ const App = (): React.JSX.Element => {
         try {
           const data = JSON.parse(event.data);
           if (data.type === 'transcript') {
-            setStreamTranscript(data.transcript);
+            if (data.isFinal) {
+              // Append finalized transcript
+              setStreamTranscript((prev) => (prev ? prev + ' ' : '') + data.transcript);
+            } else {
+              // Show interim result temporarily (will be replaced by final)
+              setStreamTranscript((prev) => {
+                // Remove any previous interim text (after last final)
+                const base = prev || '';
+                return base + ' [' + data.transcript + '...]';
+              });
+            }
           } else if (data.type === 'error') {
+            console.error('Stream error from server:', data.message);
             setErrorMessage('Google Speech Stream error: ' + data.message);
           }
         } catch (e) {
@@ -682,7 +693,7 @@ const App = (): React.JSX.Element => {
           <View style={styles.langSelectorRow}>
             {[
               { id: 'si-LK', label: 'Sinhala LK' },
-              { id: 'ta-LK', label: 'Tamil LK' },
+              { id: 'ta-IN', label: 'Tamil' },
               { id: 'en-US', label: 'English' },
               { id: 'multilingual', label: 'Combination' },
             ].map((option) => {

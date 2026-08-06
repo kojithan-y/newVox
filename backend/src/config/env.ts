@@ -34,7 +34,7 @@ export const env = {
   port: Number(process.env.PORT || 4000),
   chirpApiKey: process.env.CHIRP_API_KEY,
   chirpApiUrl: process.env.CHIRP_API_URL || 'https://speech.googleapis.com/v1/speech:recognize',
-  chirpModel: process.env.CHIRP_MODEL || 'chirp_3',
+  chirpModel: process.env.CHIRP_MODEL || 'default',
   googleCredentialsPath: resolvedGoogleCreds,
 };
 
