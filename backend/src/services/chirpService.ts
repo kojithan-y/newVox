@@ -108,7 +108,7 @@ export const transcribeWithChirp = async (
       },
     };
 
-    // Speaker diarization (batch mode supports this well)
+    // Speaker diarization (requested by user toggle)
     if (enableDiarization) {
       config.diarizationConfig = {
         enableSpeakerDiarization: true,
@@ -126,6 +126,11 @@ export const transcribeWithChirp = async (
 
     // Wait for the long-running operation to complete.
     const [response] = await operation.promise();
+
+    console.log(`[Batch] Transcription response.results length: ${response.results?.length}`);
+    if (response.results && response.results.length > 0) {
+      console.log(`[Batch] First result alternative transcript: "${response.results[0].alternatives?.[0]?.transcript}"`);
+    }
 
     if (!response.results || response.results.length === 0) {
       return '';

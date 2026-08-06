@@ -21,9 +21,10 @@ const client = axios.create({
   timeout: 180000,
 });
 
-export const transcribeAudio = async (audioUri: string, voiceType: string): Promise<TranscriptionResponse> => {
+export const transcribeAudio = async (audioUri: string, voiceType: string, enableDiarization: boolean = false): Promise<TranscriptionResponse> => {
   const formData = new FormData();
   formData.append('voiceType', voiceType);
+  formData.append('enableDiarization', String(enableDiarization));
 
   if (Platform.OS === 'web') {
     try {

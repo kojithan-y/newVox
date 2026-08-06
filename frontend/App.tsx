@@ -8,6 +8,7 @@ import {
   StyleSheet,
   Text,
   View,
+  Switch,
 } from 'react-native';
 import { Audio } from 'expo-av';
 import * as Clipboard from 'expo-clipboard';
@@ -98,6 +99,7 @@ const App = (): React.JSX.Element => {
   const [volume, setVolume] = useState(0);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [voiceType, setVoiceType] = useState<string>('multilingual');
+  const [isDiarizationEnabled, setIsDiarizationEnabled] = useState<boolean>(false);
 
   // Playback states
   const [isPlaying, setIsPlaying] = useState(false);
@@ -140,6 +142,10 @@ const App = (): React.JSX.Element => {
         if (val) {
           setVoiceType(val);
         }
+        const diarizationVal = await AsyncStorage.getItem('@diarization_enabled');
+        if (diarizationVal !== null) {
+          setIsDiarizationEnabled(diarizationVal === 'true');
+        }
       } catch (e) {
         // silent fail
       }
@@ -151,6 +157,15 @@ const App = (): React.JSX.Element => {
     setVoiceType(type);
     try {
       await AsyncStorage.setItem('@voice_type', type);
+    } catch (e) {
+      // silent fail
+    }
+  };
+
+  const handleDiarizationChange = async (enabled: boolean) => {
+    setIsDiarizationEnabled(enabled);
+    try {
+      await AsyncStorage.setItem('@diarization_enabled', String(enabled));
     } catch (e) {
       // silent fail
     }
@@ -525,7 +540,7 @@ const App = (): React.JSX.Element => {
     try {
       setIsUploading(true);
       setStatusText('Transcribing');
-      const response = await transcribeAudio(audioUri, voiceType);
+      const response = await transcribeAudio(audioUri, voiceType, isDiarizationEnabled);
       setTranscript(response.transcript || '');
       setStatusText('Transcription complete');
     } catch (error) {
@@ -728,6 +743,22 @@ const App = (): React.JSX.Element => {
                 </Pressable>
               );
             })}
+          </View>
+          <View style={[styles.diarizationRow, { marginTop: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
+            <View>
+              <Text style={[styles.langLabel, isDarkMode && styles.langLabelDark, { marginBottom: 2 }]}>
+                Group Talk (Speaker Diarization)
+              </Text>
+              <Text style={[{ fontSize: 11, color: isDarkMode ? '#94a3b8' : '#64748b' }]}>
+                Identifies who is speaking (Batch mode only)
+              </Text>
+            </View>
+            <Switch
+              value={isDiarizationEnabled}
+              onValueChange={handleDiarizationChange}
+              trackColor={{ false: isDarkMode ? '#334155' : '#cbd5e1', true: '#10b981' }}
+              thumbColor={isDarkMode ? '#ffffff' : '#ffffff'}
+            />
           </View>
         </View>
 
